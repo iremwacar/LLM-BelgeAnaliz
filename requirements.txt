@@ -1,0 +1,5 @@
+pymupdf==1.23.8
+qdrant-client
+streamlit
+langchain
+ollama

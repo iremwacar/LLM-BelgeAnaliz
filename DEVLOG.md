@@ -19,4 +19,29 @@ OCR'nin tamamen eksik olduğunu düşünüyorum bu sebeple bu mimariyi diğerler
 Bu aşamada LFRAG temelinde bir sistem geliştirmeyi düşünüyorum. Bu sisteme MARGE-RAG'da kullanılan graf ajan mantığını temel düzeyde entegre etmeye çalışacağım. Görselleri de VLM-RAG ile anlamlandırabileceğimi düşünmekteyim. 
 
 ---
-Kodlamama öncelikle LFRAG ile konumlandırma yaptığı ve dökümanları bloklandırdacağı şekilde başlıyorum
+Kodlamama öncelikle LFRAG ile konumlandırma yaptığı ve dökümanları bloklandırdacağı şekilde başlıyorum.
+
+
+Kodlama aşamasında dökümandaki görsellerin başarılı şekilde ykalandığını fakat tabloların yakalanmadığını gördüm.
+Çözüm-> PyMuPDF'ın find_tables() fonsiyonunu kullanacağız.
+Tabloları yakalayamamasının sebebi dökümanın kaynak kodunda resimler "XObject" adında paketlerde tutulur tablolar bu paketlerde yer almaz. Birer resim değildirler. Sistem onları çizgileri boşlukları ayarlanmış bağımsız metin parçaları olarak görür.
+!!Sistem matematiksel formülleri düz metin olarak algılamaktadır. Dikey çizgisi olmayan tablo ve yoğun vktörel çizgi içeren şemalarda sınırları yanlış hesaplamaktadır.
+
+Çözüm olarak pdfplumber kullandım fakat bunun daha başarısız olduğunu tespit ettim.
+
+Pdf'in her sayfasında yer alan madde imleri her defasında görsel olarak algılandığı tespit edildi. Çözüm olarak genişlik ve yükseklik kontrolü yapılacak. 
+
+Genişkil ve yükseklik kontrolü yapıldığında tasarımcının görsellerin arka planına koyduğu düz resimleri de yakalamaktadır. Bunun için renk değişimini kullanacağım arka planlarda standart sapma sıfıra yakındır fakat görselde bir nesne varsa renk geçişi çok yüksektir bunu kullanacağım.
+
+Bu yöntemle bir çok arka plan görselinden kurtuldum fakat hala gereksiz görseller mevcut. Bunu çözmek için OpenCV kullanmayı tercih edebilirdim fakat buradaki hasas ayar her bir pdf'de değişeceği için başarılı bir yöntem olacağını düşünmüyorum. Bunu LLM promptunda çözmek bu proje özelinde çok daha mantıklı.
+
+Görsellerin anlamlandırılmasına geçebiliriz Lema lokal modeli basit bir resim için türkçe dilinde çok başarısız kaldı.
+
+
+Sistem geliştirmesi sonunda teknik bir konu olduğunda cevaplayabildiğini fakat anlamsal bir şey olduğunda cevaplayamadığını gördüm. Örneğin belgede neyden bahsedilmektedir gii sorularda yetersiz kalmaktadır. -> Bunun sebebi mimarimizde birbiriyle alaklaı kısımları bölümlendrimesi fakat bir bütün olarak değerlendirememesidir.
+
+Bunun için farklı yöntemler vardır:
+1. Node olarak sistemin özetine bağlamak. Bu bana mantıksız geldi. Çünkü "Sistem ne anlatıyor" sorusu sorulduğunda genel bir özet bekleriz. Fakat "Vektörel veri tabanı sistemi ne anlatıyor" sorusu sorulduğunda vektörel veri tabanının ne anlattığıı sorarız. Fakat bu mimarideki sistem bu soru farkını anlamaz ve özet verir. Vektörel db özelliğini kullanamamış oluruz.
+2. LLM ile çözmek. İşlemciye aşırı yüklenip maliyeti arttırıp zamanı çoğaltmak istememekteyim. 
+
+Karşılaştığım problemin ismi "Global vs. Local Query Routing"

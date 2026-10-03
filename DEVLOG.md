@@ -45,3 +45,7 @@ Bunun için farklı yöntemler vardır:
 2. LLM ile çözmek. İşlemciye aşırı yüklenip maliyeti arttırıp zamanı çoğaltmak istememekteyim. 
 
 Karşılaştığım problemin ismi "Global vs. Local Query Routing"
+
+Bunun için çözümün ismi "İki Katmanlı İndeksleme ve Otomatik Profilleme" başlık yapılarından genel bir özetleme yapan bir sistem kullandım. Başlıklardan özet çıkardığımız bu sistem belgenin tümüne bakarak o belenin parmak izi niteliğinde bir özet çıkartır. 
+
+Bu şekilde özetlemenin yine yetrsiz kaldığını tespit ettim. Örneğin sistemin genel özeti güzel bir şekilde açıklanıyor fakat spesifik olmayan bir soru "Dönüşüm hakkındaki düşünce nedir?" gibi detay içermeyen ama özette sormayan sorularda bu yöntem yetrsiz kalıyor. Bunun için bir ağaç mantığı kullanmak daha kullanışlı geldi. Gövde bir bilgi, dallar, yapraklar gibi daha sistematik bir yapı.

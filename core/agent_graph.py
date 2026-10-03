@@ -4,86 +4,43 @@ import ollama
 
 class TusasAgentWorkflow:
     def __init__(self):
-        print("[AGENT] Graf Ajan Mimarisi başlatılıyor...")
+        print("[AGENT] İki Katmanlı Ajan Mimarisi başlatılıyor...")
         self.rag_engine = TusasRAGEngine()
 
-    def rewrite_query(self, query: str) -> str:
-        """Adım 1: Kullanıcı sorgusunu Vektör RAG için doğal dilde optimize eder."""
-        print(f"\n[Ajan - Adım 1] Sorgu optimize ediliyor: '{query}'")
-        prompt = (
-            "Kullanıcı sorusunu vektör veritabanında arama yapmak için sade bir arama cümlesine çevir. "
-            "KESİNLİKLE açıklama, not, 'Note:', parantez içi bilgi veya sohbet metni ekleme. "
-            "Sadece arama metnini ver.\n\n"
-            f"Soru: {query}"
-        )
-        try:
-            response = ollama.chat(
-                model="llama3", 
-                messages=[{"role": "user", "content": prompt}]
-            )
-            optimized = response["message"]["content"].strip()
-            # Modelin ekleyebileceği olası sohbet/not satırlarını ayıkla, ilk satırı al
-            optimized = optimized.split('\n')[0].replace('"', '').replace("'", "")
-            print(f"[Ajan] Optimize Edilen Doğal Sorgu: '{optimized}'")
-            return optimized
-        except Exception:
-            return query 
-
     def run(self, user_query: str):
-        """Çok adımlı ajan akışını (Agentic Workflow) çalıştırır."""
+        """
+        Niyet Bağımsız ve Katmanlı Ajan Akışı. 
+        Kullanıcı ister global ('Bu belge ne anlatıyor?') ister local ('Attention nedir?') sorsun,
+        vektör motoru en doğru bağlamı (özet veya detay) doğrudan yakalar.
+        """
         print("="*50)
         print("AJAN İŞ AKIŞI BAŞLATILDI")
         print("="*50)
 
-        # 1. Aşama: Doğal Dil Sorgu Optimizasyonu
-        optimized_query = self.rewrite_query(user_query)
+        print(f"[Ajan] İşlenen Sorgu: '{user_query}'")
+        
+        # Two-Tier Retrieval (Özetler ve Chunk'lar ortak uzayda taranır)
+        contexts = self.rag_engine.search(user_query, top_k=4)
 
-        # 2. Aşama: Akıllı Arama ve Veri Çekme (Retrieval)
-        contexts = self.rag_engine.search(optimized_query, top_k=3)
-
-        # Bağlam metinlerini oluştur
         context_text = ""
         image_references = []
         for ctx in contexts:
-            context_text += f"\n--- Sayfa {ctx['page']} ({ctx['type']}) ---\n{ctx['content']}\n"
+            context_text += f"\n--- [Tip: {ctx['type'].upper()} | Sayfa: {ctx['page']}] ---\n{ctx['content']}\n"
             if ctx['type'] == 'image' and ctx['image_path']:
                 image_references.append(ctx['image_path'])
 
-        # Hızlı LLM Hakem Kontrolü (Relevancy Check)
-        hakem_prompt = (
-            "Sen bir RAG doğrulama hakemisin. Sana bir kullanıcı sorusu ve bu soruyu yanıtlamak için "
-            "belgeden çekilen metinler (bağlam) verilecek.\n"
-            "Soru: " + user_query + "\n"
-            "Bağlam:\n" + context_text + "\n\n"
-            "Bu bağlam, kullanıcının sorusunu yanıtlamak için yeterli ve ilgili mi? "
-            "Sadece 'EVET' veya 'HAYIR' yaz."
+        # Profesyonel Sistem Promptu
+        system_prompt = (
+            "Sen kıdemli AR-GE Belge Analiz Asistanısın. "
+            "Sana sunulan bağlam hem belgenin makro/genel özetlerini hem de mikro/teknik detaylarını içerebilir. "
+            "Kullanıcının sorusunu (ister genel ister teknik olsun) kesinlikle ve yalnızca **akıcı, profesyonel ve teknik bir Türkçe** ile yanıtla. "
+            "Asla İngilizce etiketler veya kalıplar kullanma. "
+            "Eğer bilgi bağlamda kesinlikle yoksa 'Belgede bu bilgiye ulaşılamadı' de."
         )
         
-        hakem_yanit = ollama.chat(
-            model="llama3",
-            messages=[{"role": "user", "content": hakem_prompt}]
-        )["message"]["content"].strip().upper()
+        user_prompt = f"Bağlam:\n{context_text}\n\nKullanıcı Sorusu: {user_query}"
 
-        print(f"[Ajan Hakem Kararı]: {hakem_yanit}")
-
-        if "HAYIR" in hakem_yanit or not contexts:
-            return (
-                "Üzgünüm, yüklediğiniz teknik belgede bu soruyla ilgili herhangi bir bilgiye ulaşılamadı. "
-                "Lütfen belgenin kapsamına uygun bir soru sorun.", 
-                []
-            )
-
-        # 3. Aşama: Nihai Yanıt Sentezi (Katı Türkçe Kilidi)
-        system_prompt = (
-            "Sen TUSAŞ üst düzey belge analiz ve AR-GE asistanısın. "
-            "Kullanıcının sorusunu **kesinlikle ve yalnızca akıcı, teknik bir Türkçe ile** yanıtla. "
-            "Asla 'Context:', 'Response:' gibi İngilizce kalıplar veya etiketler kullanma. "
-            "Yanıtına doğrudan Türkçe metinle başla. İngilizce bağlamdaki tüm teknik terimleri "
-            "Türkçeye çevirerek profesyonel bir mühendislik raporu gibi sentezle."
-        )
-        user_prompt = f"Bağlam:\n{context_text}\n\nOrijinal Soru: {user_query}"
-
-        print("[Ajan - Adım 3] Ollama (Llama-3) nihai yanıtı sentezliyor...")
+        print("[Ajan] Ollama (Llama-3) nihai sentezi gerçekleştiriyor...")
         try:
             response = ollama.chat(
                 model="llama3",
@@ -99,8 +56,12 @@ class TusasAgentWorkflow:
 
 if __name__ == "__main__":
     agent = TusasAgentWorkflow()
-    test_soru = "İstenen nedir?" 
+    
+    # Test edelim: Hem global hem local soruları aynı anda kusursuz yönetebiliyor mu?
+    test_soru = "Sürdürülebilirlik hakkında düşünceleri neler?" 
+    
     yanit, gorseller = agent.run(test_soru)
+    
     print("\n" + "="*50)
     print("AJANIN NİHAİ YANITI:")
     print(yanit)

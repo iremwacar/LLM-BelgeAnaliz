@@ -225,3 +225,133 @@ DETAYLI TEST SONUÇ TABLOSU (BENCHMARK REPORT)
 | Case_Study_TUSAŞ_LLM.pdf | Nonsensical | TR | TUSAŞ'ın 2030 yılında uzaya fırlatacağı roketin yakıt kapasitesi kaç tondur? | Belgede bu bilgiye ulaşılamadı. | Belgede bu bilgiye ulaşılamadı.... | 1.0 |
 ================================================================================
 Net Sistem Başarı Skoru (Ground Truth Accuracy): %92.3
+
+
+
+TEST SORUSU [1]: Miles&Smiles kartlarında mil kazanılamayacak işlem türleri (istisnalar) nelerdir?
+================================================================================
+
+--- MODEL A: CLIP (ViT-B-32) ---
+En Yüksek Kosinüs Benzerlik Skoru: 0.8269
+Üretilen Yanıt:
+Based on the given text, there are no specific types of transactions that cannot be recorded on Miles&Smiles cards. The text only refers to the Murabaha financing scheme and the "altınpuan" system, which are specific to Kuveyt Turk's banking services. It does not mention Miles&Smiles cards or any restrictions on transactions.
+
+--- MODEL B: BAAI/bge-m3 ---
+En Yüksek Kosinüs Benzerlik Skoru: 0.6265
+Üretilen Yanıt:
+According to the contract, the following types of transactions will not generate Miles&Smiles miles:
+
+1. Payments for Banka's insurance products, banking service packages, cash withdrawals, bill payments, and other services.
+2. Payments for investments, such as stock or bond transactions, and other financial services.
+3. Payments for services like HGS/OGS, POS, and other similar services.
+4. Payments for membership fees, donations, and other non-transaction-related services.
+5. Payments for goods and services that are not genuine, such as fake or counterfeit products.
+
+Additionally, transactions that are deemed to be in violation of the Turkish Airlines (THY) FFP membership agreement or conditions will also not generate Miles&Smiles miles.
+
+It's also important to note that transactions that are subject to certain conditions or requirements, such as minimum spend amounts or specific types of transactions, will not generate Miles&Smiles miles if those conditions are not met.
+
+================================================================================
+
+================================================================================
+TEST SORUSU [2]: Sadece banka kartı kullanan bir müşterinin mil kazanabilmesi için gereken aylık net alışveriş alt sınırı nedir?
+================================================================================
+
+--- MODEL A: CLIP (ViT-B-32) ---
+En Yüksek Kosinüs Benzerlik Skoru: 0.8734
+Üretilen Yanıt:
+According to the contract, there is no mention of a monthly net purchase limit for customers who use a bank card. The contract only discusses the "Altınpuan" system, which is specific to gold transactions and allows customers to earn rewards in the form of gold. The system is based on the customer's purchases and does not specify a monthly limit.
+
+--- MODEL B: BAAI/bge-m3 ---
+En Yüksek Kosinüs Benzerlik Skoru: 0.6394
+Üretilen Yanıt:
+According to the contract, for a customer who only uses a bank card (without a Miles&Smiles credit card) to make purchases, they will be able to earn miles if their monthly net purchases exceed 1,000 TL.
+
+================================================================================
+
+================================================================================
+TEST SORUSU [3]: Taksitli işlemler yapılabilmesi için asıl kartın hangi şemaya sahip olması zorunludur ve bu süreçte müşteri bankayı hangi sıfatla temsil eder?
+================================================================================
+
+--- MODEL A: CLIP (ViT-B-32) ---
+En Yüksek Kosinüs Benzerlik Skoru: 0.8703
+Üretilen Yanıt:
+According to the contract, in order for installment transactions to be possible, the primary card must have the "Saglam Kart" scheme. 
+
+As for your second question, according to the contract, the customer represents the bank in the capacity of "Müşteri" (Customer) when engaging in installment transactions.
+
+--- MODEL B: BAAI/bge-m3 ---
+En Yüksek Kosinüs Benzerlik Skoru: 0.6441
+Üretilen Yanıt:
+According to the contract, for taksitli işlemler (installment purchases) to be made, the primary card must be a Sağlam Kart (Healthy Card) Troy. This means that the primary card must be a card that is in a healthy state, i.e., not expired or blocked, and must have a Troy ( Turkish phrase "Troy" means "valid" or "active") status.
+
+As for the second part of your question, the customer represents the bank as a vekil (proxy) in taksitli işlemler. This means that the customer is acting on behalf of the bank and is authorized to make transactions and agreements with third parties on the bank's behalf.
+
+================================================================================
+
+
+
+(base) PS C:\Users\iremm\OneDrive\Desktop\LLM-BelgeAnaliz> python core/compare_llms.py
+[BENCHMARK] BGE-M3 Vektör Modeli ve Ollama LLM Karşılaştırıcısı başlatılıyor...
+Loading weights: 100%|█████████████████| 391/391 [00:03<00:00, 129.00it/s]
+[INFO] Otomatik olarak tespit edilen Qdrant koleksiyonu: tusas_doc_collection
+==========================================================================================
+TEST SORUSU [1]: Miles&Smiles kartlarında mil kazanılamayacak işlem türleri (istisnalar) nelerdir?
+==========================================================================================
+[llama3] yanıt üretiyor...
+[qwen2.5:7b-instruct] yanıt üretiyor...
+
+--- MODEL A (llama3) ---
+Belgede bu bilgiye ulaşılamadı.
+
+--------------------------------------------------
+--- MODEL B (qwen2.5:7b-instruct) ---
+Miles&Smiles kartlarında mil kazanılamayacak işlem türleri şunlardır:
+
+1. Gerçek bir mal ve hizmet alımı olmaksızın yapılan harcamalar.
+2. Olağan bilet alımı sayısına ve niteliğine aşırı bilet alımları.
+3. Müşterinin limitini aşan ya da limitini aşmak amacı ile borcundan fazlaödeme yapan işlemler.
+4. Sigorta ürünleri, nakit çekimler, fatura ödemeleri, kiralık kasa işlemleri ve ödemeleri, kart ücretlerine dair ödemeler, kredilere ilişkin taksitler, ödemeler, avans ödemeleri.
+5. Döviz ile yapılan harcamaların TL değerine göre belirlenen mil kazanım uygulaması.
+6. Müşterinin ya da Ek Kart hamilinin, harcama sonrası mal ya da hizmeti iade etmesi ya da harcamasını iptal etmesi halinde, bu harcama karşılığı kazanılan Miller de iptal edilir.
+
+Bu işlemlerle ilgili detaylı bilgiler, Türk Hava Yolları tarafından yapılan düzenlemelere ve bu Sözleşmedeki kurallara göre belirlenmiştir.
+==========================================================================================
+
+==========================================================================================
+TEST SORUSU [2]: Sadece banka kartı kullanan bir müşterinin mil kazanabilmesi için gereken aylık net alışveriş alt sınırı nedir?
+==========================================================================================
+[llama3] yanıt üretiyor...
+[qwen2.5:7b-instruct] yanıt üretiyor...
+
+--- MODEL A (llama3) ---
+Belgede bu bilgiye ulaşılamadı.
+
+--------------------------------------------------
+--- MODEL B (qwen2.5:7b-instruct) ---
+1.000.-TL
+==========================================================================================
+
+==========================================================================================
+TEST SORUSU [3]: Belgede adı geçen ve bu metinde hiç olmayan (örneğin uçakbileti sigortası veya uzay aracı tamiri) tamamen hayali bir hizmet için mil verilir mi?
+==========================================================================================
+[llama3] yanıt üretiyor...
+[qwen2.5:7b-instruct] yanıt üretiyor...
+
+--- MODEL A (llama3) ---
+Belgede bu bilgiye ulaşılamadı.
+
+--------------------------------------------------
+--- MODEL B (qwen2.5:7b-instruct) ---
+Belgede ve verilen metinde açıkça belirtilen herhangi bir hizmet veya ürüniçin mil verileceği belirtilmemiştir. Örneğin:
+
+1. Uçak biletleri satın alma durumunda belirli bir mil kazanma oranına rastlanmaktadır.
+2. Sigortalar, kira, nakit çekimler gibi işlemler mil kazanma kapsamı dışında bırakılmıştır.
+
+Öte yandan, belgede "hayali bir hizmet" için mil verilemeyeceği genel bir ifade yapılmıştır. Ancak:
+
+1. Belge "gerçek bir mal ve hizmet alımı olmaksızın" yapılan harcamaların sınırlı bir şekilde mil kazanma kabul edilmesine izin vermektedir. Bu, olağan bilet alımı sayısını aşan veya limiti aşan durumlar dahil olmak üzere belirli koşullara tabidir.
+2. Belgede belirtilen mil kazanma koşullarının ötesinde hayali veya sadecefikirsel olana ait harcamalar için mil kazanma olası değil.
+
+Bu nedenle, hayali bir hizmet veya ürün için mil verilme olasılığı genellikle olumsuz olacak ve genellikle belirtilmeyecektir. Ancak belgenin tümününincelendiği ve belirli durumlar değerlendirildiği takdirde, belirli bir hayali temsil eden durumlar için özel kurallar olabilir. Bu nedenle, belgenintam metni okunduğunda ve belirli durumlarda mil kazanma olasılıklarının değerlendirilmesi gerekebilir.
+==========================================================================================

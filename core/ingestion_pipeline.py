@@ -2,7 +2,7 @@ import os
 import io
 import uuid
 import base64
-from PIL import Image, ImageStat
+from PIL import Image
 import fitz  # PyMuPDF
 import pdfplumber
 from qdrant_client import QdrantClient
@@ -12,8 +12,8 @@ import ollama
 
 class TusasIngestionPipeline:
     def __init__(self, collection_name="tusas_doc_collection", db_path="./qdrant_data"):
-        print("[INGESTION] Konu/Başlık Duyarlı (Heading-Aware) RAPTOR Hiyerarşik Boru Hattı başlatılıyor...")
-        self.model = SentenceTransformer('sentence-transformers/clip-ViT-B-32-multilingual-v1')
+        print("[INGESTION] BGE-M3 ve Granüler Multimodal Belge Ayrıştırma Boru Hattı başlatılıyor...")
+        self.model = SentenceTransformer('BAAI/bge-m3', model_kwargs={"use_safetensors": True})
         self.client = QdrantClient(path=db_path)
         self.collection_name = collection_name
         self._init_collection()
@@ -21,16 +21,17 @@ class TusasIngestionPipeline:
     def _init_collection(self):
         collections = self.client.get_collections().collections
         exists = any(c.name == self.collection_name for c in collections)
-        vector_size = 512  # CLIP ViT-B-32 dimension
+        vector_size = 1024  # BGE-M3 dimension
         
-        if not exists:
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
-            )
-            print(f"[Qdrant] '{self.collection_name}' koleksiyonu oluşturuldu.")
-        else:
-            print(f"[Qdrant] '{self.collection_name}' koleksiyonu zaten mevcut.")
+        if exists:
+            self.client.delete_collection(collection_name=self.collection_name)
+            print(f"[Qdrant] Eski koleksiyon temizlendi.")
+            
+        self.client.create_collection(
+            collection_name=self.collection_name,
+            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+        )
+        print(f"[Qdrant] '{self.collection_name}' koleksiyonu (1024d) başarıyla oluşturuldu.")
 
     def sanitize_text(self, text: str) -> str:
         if not text:
@@ -45,9 +46,9 @@ class TusasIngestionPipeline:
                 base64_image = base64.b64encode(image_file.read()).decode("utf-8")
 
             prompt = (
-                "Sen kıdemli bir AR-GE görsel analiz uzmanısın. Bu görseli incele. "
-                "Eğer görsel sadece düz renk, boş çerçeve, gradyan veya anlamsız sayfa süsüyse SADECE 'ANLAMSIZ_GORSEL' yaz. "
-                "Eğer görselde metin, tablo, grafik, mimari şema veya akış şeması varsa, içeriğini detaylıca teknik Türkçe ile açıkla."
+                "Sen kıdemli bir OCR ve belge deşifre uzmanısın. Bu görseldeki/taranmış el yazısı veya basılı belgedeki TÜM metinleri, başlıkları, "
+                "maddeleri, formülleri ve şema etiketlerini eksiksiz, satır satır ve birebir Türkçe olarak transkribe et. "
+                "Asla sohbet etme, yorum yapma, 'Merhaba' gibi ifadeler veya yönlendirici cümleler kullanma. Sadece belgede ne yazıyorsa eksiksiz olarak aktar."
             )
 
             response = ollama.chat(
@@ -59,21 +60,51 @@ class TusasIngestionPipeline:
                 }]
             )
             caption = response["message"]["content"].strip()
-            if "ANLAMSIZ_GORSEL" in caption.upper():
-                return ""
             return caption
         except Exception as e:
             print(f"[VLM Uyarı] Görsel analiz edilemedi: {e}")
             return ""
 
-    def extract_lfrag_blocks(self, pdf_path: str):
-        print(f"[LFRAG] Başlık ve Yapı Duyarlı Ayrıştırma: {pdf_path}")
-        document_blocks = []
+    def extract_granular_blocks_from_image(self, image_path: str):
+        print(f"[VLM] Görsel belge taranıyor ve granüler bloklara ayrıştırılıyor: {image_path}")
+        raw_text = self.analyze_image_with_vlm(image_path)
+        if not raw_text or "ANLAMSIZ_GORSEL" in raw_text.upper():
+            return []
 
+        # Satır satır veya madde madde bölerek PDF'lerdeki gibi granüler chunk'lar üretiyoruz
+        lines = raw_text.split("\n")
+        document_blocks = []
+        
+        current_heading = "Giriş / Genel Başlık"
+        for idx, line in enumerate(lines):
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            
+            # Başlık tespiti (örneğin kısa ve başında/sonunda süs olan veya madde olmayan satırlar)
+            is_heading = False
+            if len(cleaned) < 50 and not cleaned.startswith("-") and not cleaned.startswith("✓") and not cleaned.startswith("*"):
+                is_heading = True
+                current_heading = cleaned
+
+            document_blocks.append({
+                "id": f"img_block_{idx}",
+                "page": 1,
+                "level": 0,
+                "type": "chunk",
+                "is_heading": is_heading,
+                "content": f"[{current_heading}]: {cleaned}",
+                "image_path": image_path
+            })
+
+        return document_blocks
+
+    def extract_lfrag_blocks(self, pdf_path: str):
+        print(f"[LFRAG] PDF Başlık ve Yapı Duyarlı Ayrıştırma: {pdf_path}")
+        document_blocks = []
         pdf_fitz = fitz.open(pdf_path)
         pdf_plumber = pdfplumber.open(pdf_path)
 
-        # Önce belgedeki ortalama font boyutunu hesaplayarak başlık tespiti yapalım
         font_sizes = []
         for page in pdf_fitz:
             for b in page.get_text("dict").get("blocks", []):
@@ -88,7 +119,6 @@ class TusasIngestionPipeline:
             fitz_page = pdf_fitz[page_num]
             plumber_page = pdf_plumber.pages[page_num]
 
-            # 1. Tablolar
             table_bboxes = []
             tables = plumber_page.find_tables()
             for tab_index, table in enumerate(tables):
@@ -113,13 +143,11 @@ class TusasIngestionPipeline:
                     "image_path": ""
                 })
 
-            # 2. Metin ve Görseller
             page_dict = fitz_page.get_text("dict")
             blocks = page_dict.get("blocks", [])
 
             for b_index, block in enumerate(blocks):
                 block_bbox = fitz.Rect(block["bbox"])
-                
                 is_in_table = False
                 for t_bbox in table_bboxes:
                     plumber_rect = fitz.Rect(t_bbox)
@@ -136,7 +164,6 @@ class TusasIngestionPipeline:
                     text_content = ""
                     max_span_size = 0.1
                     is_bold = False
-                    
                     for line in block.get("lines", []):
                         for span in line.get("spans", []):
                             txt = span.get("text", "")
@@ -151,9 +178,7 @@ class TusasIngestionPipeline:
                     if cleaned_text:
                         is_heading = False
                         cleaned_len = len(cleaned_text)
-
-                        # Yasaklı formül ve gürültü kontrolü
-                        has_math_symbols = any(sym in cleaned_text for sym in ["=", "softmax", "√", "∑", "∏", "矩阵"])
+                        has_math_symbols = any(sym in cleaned_text for sym in ["=", "softmax", "√", "∑", "∏", "±"])
                         has_email = "@" in cleaned_text
                         has_author_stars = any(sym in cleaned_text for sym in ["∗", "†", "‡"])
                         is_reference = cleaned_text.startswith("[") and "]" in cleaned_text[:5]
@@ -178,26 +203,15 @@ class TusasIngestionPipeline:
                     height = bbox[3] - bbox[1]
                     if width < 50 or height < 50:
                         continue
-
                     image_bytes = block.get("image")
                     if image_bytes:
-                        try:
-                            img = Image.open(io.BytesIO(image_bytes)).convert("L")
-                            if img.entropy() < 3.0:
-                                continue
-                        except Exception:
-                            pass
-
                         os.makedirs("data1", exist_ok=True)
                         image_filename = f"image_p{page_num+1}_b{b_index}.png"
                         image_filepath = os.path.join("data1", image_filename)
-                        
                         with open(image_filepath, "wb") as f:
                             f.write(image_bytes)
 
-                        print(f"[VLM] Sayfa {page_num+1} görseli analiz ediliyor...")
                         vlm_caption = self.analyze_image_with_vlm(image_filepath)
-                        
                         if vlm_caption:
                             document_blocks.append({
                                 "id": f"page_{page_num+1}_img_{b_index}",
@@ -214,22 +228,13 @@ class TusasIngestionPipeline:
         return document_blocks
 
     def generate_raptor_hierarchy(self, document_blocks):
-        """
-        Konu ve Başlık Duyarlı (Heading/Topic-Aware) RAPTOR Ağacı Oluşturur:
-        - Level 0: Micro Chunks / Tablolar / Görseller
-        - Level 1: Tespit edilen başlıklar veya anlamsal eşiklere göre dinamik konu bölümleri (Section Summaries)
-        - Level 2: Belge Küresel Vizyon Özeti (Document Global Summary)
-        """
-        print("[RAPTOR] Başlık ve Konu Değişimlerine Duyarlı Hiyerarşik Ağaç inşa ediliyor...")
-        
-        # 1. Adım: Level 1 - Konu/Başlık Bazlı Bölüm Özetleri (Semantic Chunking by Headings)
+        print("[RAPTOR] Hiyerarşik Ağaç inşa ediliyor...")
         sections = []
         current_section_blocks = []
         current_heading = "Giriş / Genel Bölüm"
         
         for block in document_blocks:
             if block.get("is_heading", False):
-                # Eğer bir önceki bölüm doluysa kaydet
                 if current_section_blocks:
                     sections.append({
                         "heading": current_heading,
@@ -239,8 +244,6 @@ class TusasIngestionPipeline:
                 current_heading = block["content"]
             
             current_section_blocks.append(block)
-            
-            # Eğer bir konu çok uzadıysa (örn. 3500 karakteri geçtiyse) ara bölme yap
             if sum([len(b["content"]) for b in current_section_blocks]) > 3500:
                 sections.append({
                     "heading": current_heading,
@@ -248,7 +251,6 @@ class TusasIngestionPipeline:
                 })
                 current_section_blocks = []
 
-        # Kalan son bölümü ekle
         if current_section_blocks:
             sections.append({
                 "heading": current_heading,
@@ -256,67 +258,74 @@ class TusasIngestionPipeline:
             })
 
         section_summaries = []
-        for sec_idx, sec in enumerate(sections):
+        for sec in sections:
             sec_text = "\n".join([b["content"] for b in sec["blocks"]])
             start_p = sec["blocks"][0]["page"] if sec["blocks"] else 1
             end_p = sec["blocks"][-1]["page"] if sec["blocks"] else 1
 
             prompt = (
                 f"Sen kıdemli bir AR-GE teknik direktörüsün. Belgenin '{sec['heading']}' başlıklı "
-                f"(Sayfa {start_p}-{end_p}) bölümünü incele ve buradaki ana odak noktalarını, "
-                f"teknik detayları ve stratejik hedefleri kapsayan hiyerarşik bir konu özeti (Section Summary) çıkar.\n\n"
+                f"bölümünü incele ve buradaki ana odak noktalarını, teknik detayları kapsayan hiyerarşik bir konu özeti çıkar.\n\n"
                 f"Bölüm İçeriği:\n{sec_text[:8000]}"
             )
             try:
-                res = ollama.chat(model="llama3", messages=[{"role": "user", "content": prompt}])
+                res = ollama.chat(model="qwen2.5:7b-instruct", messages=[{"role": "user", "content": prompt}])
                 summary_text = res["message"]["content"].strip()
                 section_summaries.append({
                     "id": str(uuid.uuid4()),
                     "page": f"{start_p}-{end_p}",
-                    "level": 1,  # Section Tier
+                    "level": 1,
                     "type": "section_summary",
-                    "content": f"[KONU/BÖLÜM HİYERARŞİK ÖZETİ ('{sec['heading']} - Sayfa {start_p}-{end_p}')]: {summary_text}",
+                    "content": f"[KONU/BÖLÜM ÖZETİ ('{sec['heading']}')]: {summary_text}",
                     "image_path": ""
                 })
-                print(f"[RAPTOR] Konu Özeti Oluşturuldu: '{sec['heading']}' (Sayfa {start_p}-{end_p})")
             except Exception as e:
-                print(f"[Uyarı] Konu özeti üretilemedi: {e}")
+                pass
 
-        # 2. Adım: Level 2 - Belge Küresel Vizyon Özeti (Root Summary)
         all_section_texts = "\n".join([s["content"] for s in section_summaries])
         global_summary = []
         global_prompt = (
-            "Sen TUSAŞ başmimarsın. Aşağıdaki dinamik konu özetlerinin tamamını sentetik olarak sentezle "
-            "ve bu belgenin bütünsel vizyonunu, ana hedeflerini ve stratejik kapsamını özetleyen "
-            "en üst düzey küresel vizyon özeti (Document-Level Global Summary) çıkar.\n\n"
+            "Sen başmimarsın. Aşağıdaki dinamik konu özetlerinin tamamını sentezle "
+            "ve bu belgenin bütünsel vizyonunu özetleyen küresel vizyon özeti çıkar.\n\n"
             f"Konu Özetleri:\n{all_section_texts[:15000]}"
         )
         try:
-            res = ollama.chat(model="llama3", messages=[{"role": "user", "content": global_prompt}])
+            res = ollama.chat(model="qwen2.5:7b-instruct", messages=[{"role": "user", "content": global_prompt}])
             global_text = res["message"]["content"].strip()
             global_summary.append({
                 "id": str(uuid.uuid4()),
-                "page": "Tümü (Kök/Global)",
-                "level": 2,  # Root / Global Tier
+                "page": "Tümü (Global)",
+                "level": 2,
                 "type": "document_summary",
                 "content": f"[BELGE KÜRESEL VİZYON ÖZETİ (ROOT)]: {global_text}",
                 "image_path": ""
             })
-            print("[RAPTOR] En üst düzey Global Vizyon Özeti (Root) başarıyla oluşturuldu.")
         except Exception as e:
-            print(f"[Uyarı] Global vizyon özeti üretilemedi: {e}")
+            pass
 
         return global_summary + section_summaries + document_blocks
 
-    def ingest_document(self, pdf_path: str):
+    def ingest_document(self, file_path: str):
         print("="*60)
-        print(f"KONU DUYARLI RAPTOR HİYERARŞİK INGESTION BAŞLATILDI: {pdf_path}")
+        print(f"MULTİMODAL GRANÜLER INGESTION BAŞLATILDI: {file_path}")
         print("="*60)
         
-        blocks = self.extract_lfrag_blocks(pdf_path)
-        hierarchical_items = self.generate_raptor_hierarchy(blocks)
+        ext = os.path.splitext(file_path)[1].lower()
+        document_blocks = []
         
-        print(f"[INGESTION] Toplam {len(hierarchical_items)} hiyerarşik düğüm Qdrant'a yükleniyor...")
+        if ext in ['.png', '.jpg', '.jpeg', '.webp']:
+            document_blocks = self.extract_granular_blocks_from_image(file_path)
+            if not document_blocks:
+                print("[Hata] Görsel belgeden anlamlı metin çıkarılamadı.")
+                return
+        elif ext == '.pdf':
+            document_blocks = self.extract_lfrag_blocks(file_path)
+        else:
+            raise ValueError(f"Desteklenmeyen dosya formatı: {ext}")
+            
+        hierarchical_items = self.generate_raptor_hierarchy(document_blocks)
+        
+        print(f"[INGESTION] Toplam {len(hierarchical_items)} granüler hiyerarşik düğüm BGE-M3 ile Qdrant'a yükleniyor...")
 
         points = []
         for item in hierarchical_items:
@@ -327,7 +336,7 @@ class TusasIngestionPipeline:
                     vector=vector,
                     payload={
                         "type": item["type"],
-                        "page": item["page"],
+                        "page": str(item["page"]),
                         "level": item.get("level", 0),
                         "content": item["content"],
                         "image_path": item.get("image_path", "")
@@ -339,12 +348,13 @@ class TusasIngestionPipeline:
             collection_name=self.collection_name,
             points=points
         )
-        print(f"[INGESTION] Konu Duyarlı RAPTOR İndeksleme Başarıyla Tamamlandı! ({len(points)} düğüm)")
+        print(f"[INGESTION] Granüler Multimodal İndeksleme Başarıyla Tamamlandı! ({len(points)} düğüm)")
 
 if __name__ == "__main__":
     pipeline = TusasIngestionPipeline()
-    test_pdf = "data/Banka Kartı Sözleşmesi Türkçe-069465f2-9cba-4f9e-953e-a1c3347a30aa.pdf"
-    if os.path.exists(test_pdf):
-        pipeline.ingest_document(test_pdf)
+    # Test için örnek görsel belgemiz (örneğin kullanıcının yüklediği biyoloji notu görseli veya örnek arge belgesi)
+    test_file = "data/image.png"
+    if os.path.exists(test_file):
+        pipeline.ingest_document(test_file)
     else:
-        print(f"[Uyarı] Test PDF dosyası bulunamadı: {test_pdf}")
+        print(f"[Uyarı] Test dosyası bulunamadı.")

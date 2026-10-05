@@ -4,3 +4,9 @@ streamlit
 langchain
 ollama
 pdfplumber
+fastapi
+uvicorn
+python-multipart
+sentence-transformers
+pillow
+easyocrrun app.py

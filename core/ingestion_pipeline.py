@@ -8,70 +8,115 @@ import pdfplumber
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from sentence_transformers import SentenceTransformer
+from typing import Optional
 import ollama
 
 class TusasIngestionPipeline:
-    def __init__(self, collection_name="tusas_doc_collection", db_path="./qdrant_data"):
+    def __init__(
+        self,
+        collection_name="tusas_doc_collection",
+        db_path="./qdrant_data",
+        client=None,
+        model=None,
+        recreate_collection=False,
+    ):
         print("[INGESTION] BGE-M3 ve Granüler Multimodal Belge Ayrıştırma Boru Hattı başlatılıyor...")
-        self.model = SentenceTransformer('BAAI/bge-m3', model_kwargs={"use_safetensors": True})
-        self.client = QdrantClient(path=db_path)
+        self.model = model or SentenceTransformer('BAAI/bge-m3', model_kwargs={"use_safetensors": True})
+        self.client = client or QdrantClient(path=db_path)
         self.collection_name = collection_name
-        self._init_collection()
+        self._init_collection(recreate=recreate_collection)
 
-    def _init_collection(self):
+    def _init_collection(self, recreate=False):
         collections = self.client.get_collections().collections
         exists = any(c.name == self.collection_name for c in collections)
         vector_size = 1024  # BGE-M3 dimension
-        
-        if exists:
+
+        if exists and recreate:
             self.client.delete_collection(collection_name=self.collection_name)
-            print(f"[Qdrant] Eski koleksiyon temizlendi.")
-            
-        self.client.create_collection(
+            print("[Qdrant] Eski koleksiyon temizlendi.")
+            exists = False
+
+        if not exists:
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+            )
+            print(f"[Qdrant] '{self.collection_name}' koleksiyonu (1024d) başarıyla oluşturuldu.")
+        else:
+            print(f"[Qdrant] '{self.collection_name}' koleksiyonu kullanılıyor.")
+        try:
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="document_id",
+                field_schema="keyword",
+            )
+        except Exception:
+            pass
+
+    def delete_document_vectors(self, document_id: str):
+        from qdrant_client.models import Filter, FieldCondition, MatchValue, FilterSelector
+
+        self.client.delete(
             collection_name=self.collection_name,
-            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
+                )
+            ),
         )
-        print(f"[Qdrant] '{self.collection_name}' koleksiyonu (1024d) başarıyla oluşturuldu.")
 
     def sanitize_text(self, text: str) -> str:
         if not text:
             return ""
         return text.strip()
 
+    def _get_easyocr_reader(self):
+        # Lazy loading to save memory if not needed immediately
+        if not hasattr(self, '_reader'):
+            import easyocr
+            import logging
+            logging.getLogger("easyocr").setLevel(logging.ERROR)
+            print("[OCR] EasyOCR motoru başlatılıyor (İlk yükleme birkaç saniye sürebilir)...")
+            self._reader = easyocr.Reader(['tr', 'en'], gpu=True) # If no GPU, it will fallback to CPU safely
+        return self._reader
+
     def analyze_image_with_vlm(self, image_path: str) -> str:
+        # Note: Method name kept same to avoid breaking other parts of the code, but it now uses OCR.
         if not os.path.exists(image_path):
             return "Görsel bulunamadı."
         try:
-            with open(image_path, "rb") as image_file:
-                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-
-            prompt = (
-                "Sen kıdemli bir OCR ve belge deşifre uzmanısın. Bu görseldeki/taranmış el yazısı veya basılı belgedeki TÜM metinleri, başlıkları, "
-                "maddeleri, formülleri ve şema etiketlerini eksiksiz, satır satır ve birebir Türkçe olarak transkribe et. "
-                "Asla sohbet etme, yorum yapma, 'Merhaba' gibi ifadeler veya yönlendirici cümleler kullanma. Sadece belgede ne yazıyorsa eksiksiz olarak aktar."
+            reader = self._get_easyocr_reader()
+            
+            results = reader.readtext(
+                image_path, 
+                paragraph=True,
+                x_ths=0.7, 
+                y_ths=0.5  
             )
-
-            response = ollama.chat(
-                model="llava:7b",
-                messages=[{
-                    "role": "user",
-                    "content": prompt,
-                    "images": [base64_image]
-                }]
-            )
-            caption = response["message"]["content"].strip()
-            return caption
+            
+            extracted_texts = []
+            for bbox, text in results:
+                cleaned_text = text.strip()
+                if cleaned_text:
+                    extracted_texts.append(cleaned_text)
+            
+            if not extracted_texts:
+                return "ANLAMSIZ_GORSEL"
+                
+            return "\n".join(extracted_texts)
+            
         except Exception as e:
-            print(f"[VLM Uyarı] Görsel analiz edilemedi: {e}")
+            print(f"[OCR Uyarı] Görsel analiz edilemedi: {e}")
             return ""
 
-    def extract_granular_blocks_from_image(self, image_path: str):
-        print(f"[VLM] Görsel belge taranıyor ve granüler bloklara ayrıştırılıyor: {image_path}")
+    def extract_granular_blocks_from_image(self, image_path: str, progress_cb=None):
+        print(f"[OCR] Görsel belge taranıyor ve granüler bloklara ayrıştırılıyor: {image_path}")
+        if progress_cb:
+            progress_cb("images", 28, "Resim analiz ediliyor")
         raw_text = self.analyze_image_with_vlm(image_path)
         if not raw_text or "ANLAMSIZ_GORSEL" in raw_text.upper():
             return []
 
-        # Satır satır veya madde madde bölerek PDF'lerdeki gibi granüler chunk'lar üretiyoruz
         lines = raw_text.split("\n")
         document_blocks = []
         
@@ -81,7 +126,6 @@ class TusasIngestionPipeline:
             if not cleaned:
                 continue
             
-            # Başlık tespiti (örneğin kısa ve başında/sonunda süs olan veya madde olmayan satırlar)
             is_heading = False
             if len(cleaned) < 50 and not cleaned.startswith("-") and not cleaned.startswith("✓") and not cleaned.startswith("*"):
                 is_heading = True
@@ -99,11 +143,12 @@ class TusasIngestionPipeline:
 
         return document_blocks
 
-    def extract_lfrag_blocks(self, pdf_path: str):
+    def extract_lfrag_blocks(self, pdf_path: str, progress_cb=None):
         print(f"[LFRAG] PDF Başlık ve Yapı Duyarlı Ayrıştırma: {pdf_path}")
         document_blocks = []
         pdf_fitz = fitz.open(pdf_path)
         pdf_plumber = pdfplumber.open(pdf_path)
+        page_count = max(len(pdf_fitz), 1)
 
         font_sizes = []
         for page in pdf_fitz:
@@ -116,6 +161,9 @@ class TusasIngestionPipeline:
         avg_font_size = sum(font_sizes) / len(font_sizes) if font_sizes else 11.0
 
         for page_num in range(len(pdf_fitz)):
+            if progress_cb:
+                page_pct = 12 + int((page_num / page_count) * 38)
+                progress_cb("processing", page_pct, f"İşlem sayfası {page_num + 1} / {page_count}")
             fitz_page = pdf_fitz[page_num]
             plumber_page = pdf_plumber.pages[page_num]
 
@@ -134,7 +182,7 @@ class TusasIngestionPipeline:
                             md_table += "|" + "|".join(["---" for _ in clean_row]) + "|\n"
                 
                 document_blocks.append({
-                    "id": f"page_{page_num+1}_table_{tab_index}",
+                    "id": f"sayfa_{page_num+1}_tablo_{tab_index}",
                     "page": page_num + 1,
                     "level": 0,
                     "type": "table",
@@ -188,7 +236,7 @@ class TusasIngestionPipeline:
                                 is_heading = True
 
                         document_blocks.append({
-                            "id": f"page_{page_num+1}_block_{b_index}",
+                            "id": f"sayfa_{page_num+1}_blok_{b_index}",
                             "page": page_num + 1,
                             "level": 0,
                             "type": "chunk",
@@ -211,6 +259,12 @@ class TusasIngestionPipeline:
                         with open(image_filepath, "wb") as f:
                             f.write(image_bytes)
 
+                        if progress_cb:
+                            progress_cb(
+                                "images",
+                                min(54, 40 + (page_num * 2)),
+                                f"Resim analiz ediliyor, sayfa {page_num + 1}",
+                            )
                         vlm_caption = self.analyze_image_with_vlm(image_filepath)
                         if vlm_caption:
                             document_blocks.append({
@@ -219,7 +273,7 @@ class TusasIngestionPipeline:
                                 "level": 0,
                                 "type": "image",
                                 "is_heading": False,
-                                "content": f"[GÖRSEL ANALİZİ (VLM)]: {vlm_caption}",
+                                "content": f"[GÖRSEL ANALİZİ (OCR)]: {vlm_caption}",
                                 "image_path": image_filepath
                             })
 
@@ -227,8 +281,10 @@ class TusasIngestionPipeline:
         pdf_plumber.close()
         return document_blocks
 
-    def generate_raptor_hierarchy(self, document_blocks):
+    def generate_raptor_hierarchy(self, document_blocks, progress_cb=None):
         print("[RAPTOR] Hiyerarşik Ağaç inşa ediliyor...")
+        if progress_cb:
+            progress_cb("hierarchy", 58, "Building knowledge hierarchy")
         sections = []
         current_section_blocks = []
         current_heading = "Giriş / Genel Bölüm"
@@ -258,7 +314,10 @@ class TusasIngestionPipeline:
             })
 
         section_summaries = []
-        for sec in sections:
+        for sec_index, sec in enumerate(sections):
+            if progress_cb and sections:
+                hierarchy_pct = 58 + int((sec_index / max(len(sections), 1)) * 14)
+                progress_cb("hierarchy", hierarchy_pct, f"Bilgiler topanıyor {sec_index + 1} / {len(sections)}")
             sec_text = "\n".join([b["content"] for b in sec["blocks"]])
             start_p = sec["blocks"][0]["page"] if sec["blocks"] else 1
             end_p = sec["blocks"][-1]["page"] if sec["blocks"] else 1
@@ -305,36 +364,47 @@ class TusasIngestionPipeline:
 
         return global_summary + section_summaries + document_blocks
 
-    def ingest_document(self, file_path: str):
+    def ingest_document(self, file_path: str, document_id: Optional[str] = None, progress_cb=None):
         print("="*60)
         print(f"MULTİMODAL GRANÜLER INGESTION BAŞLATILDI: {file_path}")
         print("="*60)
-        
+
+        document_id = document_id or str(uuid.uuid4())
+
+        def report(step: str, percent: int, detail: str = ""):
+            if progress_cb:
+                progress_cb(step, percent, detail)
+
+        report("processing", 8, "Processing document")
+
         ext = os.path.splitext(file_path)[1].lower()
         document_blocks = []
-        
+
         if ext in ['.png', '.jpg', '.jpeg', '.webp']:
-            document_blocks = self.extract_granular_blocks_from_image(file_path)
+            document_blocks = self.extract_granular_blocks_from_image(file_path, progress_cb=progress_cb)
             if not document_blocks:
                 print("[Hata] Görsel belgeden anlamlı metin çıkarılamadı.")
-                return
+                raise ValueError("No readable text could be extracted from the image.")
         elif ext == '.pdf':
-            document_blocks = self.extract_lfrag_blocks(file_path)
+            document_blocks = self.extract_lfrag_blocks(file_path, progress_cb=progress_cb)
         else:
             raise ValueError(f"Desteklenmeyen dosya formatı: {ext}")
-            
-        hierarchical_items = self.generate_raptor_hierarchy(document_blocks)
-        
+
+        hierarchical_items = self.generate_raptor_hierarchy(document_blocks, progress_cb=progress_cb)
+
         print(f"[INGESTION] Toplam {len(hierarchical_items)} granüler hiyerarşik düğüm BGE-M3 ile Qdrant'a yükleniyor...")
+        report("embedding", 75, "Creating embeddings")
 
         points = []
-        for item in hierarchical_items:
+        total_items = max(len(hierarchical_items), 1)
+        for index, item in enumerate(hierarchical_items):
             vector = self.model.encode(item["content"]).tolist()
             points.append(
                 PointStruct(
                     id=str(uuid.uuid4()),
                     vector=vector,
                     payload={
+                        "document_id": document_id,
                         "type": item["type"],
                         "page": str(item["page"]),
                         "level": item.get("level", 0),
@@ -343,18 +413,22 @@ class TusasIngestionPipeline:
                     }
                 )
             )
+            if index % 4 == 0 or index == len(hierarchical_items) - 1:
+                embed_pct = 75 + int(((index + 1) / total_items) * 15)
+                report("embedding", min(embed_pct, 90), f"Bilgiler kadediliyor {index + 1} / {total_items}")
 
-        self.client.upsert(
-            collection_name=self.collection_name,
-            points=points
-        )
+        report("vector_db", 92, "Transferring to vector DB")
+        batch_size = 32
+        for start in range(0, len(points), batch_size):
+            batch = points[start:start + batch_size]
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=batch
+            )
+            done = min(start + batch_size, len(points))
+            vector_pct = 92 + int((done / max(len(points), 1)) * 7)
+            report("vector_db", min(vector_pct, 99), f"İndekslenen {done} / {len(points)} düğüm")
+
+        report("ready", 100, "Document is ready for questions")
         print(f"[INGESTION] Granüler Multimodal İndeksleme Başarıyla Tamamlandı! ({len(points)} düğüm)")
-
-if __name__ == "__main__":
-    pipeline = TusasIngestionPipeline()
-    # Test için örnek görsel belgemiz (örneğin kullanıcının yüklediği biyoloji notu görseli veya örnek arge belgesi)
-    test_file = "data/image.png"
-    if os.path.exists(test_file):
-        pipeline.ingest_document(test_file)
-    else:
-        print(f"[Uyarı] Test dosyası bulunamadı.")
+        return {"document_id": document_id, "chunk_count": len(points)}

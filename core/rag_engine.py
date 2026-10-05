@@ -1,3 +1,4 @@
+from typing import Optional
 import os
 import sys
 import ollama
@@ -5,19 +6,27 @@ from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 
 class TusasRAGEngine:
-    def __init__(self, collection_name="tusas_doc_collection", db_path="./qdrant_data"):
+    def __init__(self, collection_name="tusas_doc_collection", db_path="./qdrant_data", client=None, model=None):
         print("[RAG] BGE-M3 Vektör Motoru ve Qwen2.5 Sentez Motoru başlatılıyor...")
-        self.model = SentenceTransformer('BAAI/bge-m3', model_kwargs={"use_safetensors": True})
-        self.client = QdrantClient(path=db_path)
+        self.model = model or SentenceTransformer('BAAI/bge-m3', model_kwargs={"use_safetensors": True})
+        self.client = client or QdrantClient(path=db_path)
         self.collection_name = collection_name
 
-    def search(self, query: str, top_k=6):
+    def search(self, query: str, top_k=6, document_id: Optional[str] = None):
         print(f"\n[Arama Yapılıyor]: '{query}'")
         query_vector = self.model.encode(query).tolist()
         
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+        query_filter = None
+        if document_id:
+            query_filter = Filter(
+                must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
+            )
+
         search_result = self.client.query_points(
             collection_name=self.collection_name,
             query=query_vector,
+            query_filter=query_filter,
             limit=top_k,
             with_payload=True
         )
@@ -35,8 +44,8 @@ class TusasRAGEngine:
             
         return retrieved_contexts
 
-    def generate_answer(self, query: str):
-        contexts = self.search(query, top_k=6)
+    def generate_answer(self, query: str, document_id: Optional[str] = None):
+        contexts = self.search(query, top_k=6, document_id=document_id)
         
         context_text = ""
         image_references = []
@@ -64,8 +73,13 @@ class TusasRAGEngine:
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
-                ]
+                ],
+                options={
+                    "temperature": 0.1,
+                    "repeat_penalty": 1.15,
+                    "num_predict": 600
+                }
             )
-            return response["message"]["content"], image_references
+            return response["message"]["content"], image_references, contexts
         except Exception as e:
-            return f"LLM Hata: {str(e)}", []
+            return f"LLM Hata: {str(e)}", [], []

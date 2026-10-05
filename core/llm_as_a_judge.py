@@ -129,7 +129,7 @@ SADECE AŞAĞIDAKİ GİBİ GEÇERLİ BİR JSON FORMATINDA YANIT VER. BAŞKA Hİ�
                     # 1. RAG'dan Bağlam ve Yanıt Al
                     contexts = self.rag_engine.search(query, top_k=6)
                     context_text = "\n".join([c["content"] for c in contexts])
-                    answer, refs = self.rag_engine.generate_answer(query)
+                    answer, refs, _contexts = self.rag_engine.generate_answer(query)
                     
                     # 2. LLM Hakeme (Judge) Değerlendirt
                     eval_res = self.evaluate(query, context_text, answer, expected_lang)

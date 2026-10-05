@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#ffffff" />
+  <title>BelgeAnaliz — Akıllı Belge Asistanı</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="BelgeAnaliz ana sayfa">
+        <div class="brand-mark" aria-hidden="true">B</div>
+        <div>
+          <p class="brand-kicker">AKILLI BELGE ASİSTANI</p>
+          <h1>BelgeAnaliz</h1>
+        </div>
+      </a>
+
+      <button class="upload-btn" id="openUpload" type="button">
+        <span aria-hidden="true">＋</span>
+        Yeni belge yükle
+      </button>
+
+      <div class="library-head">
+        <span>Belgelerim</span>
+        <small id="docCount">0</small>
+      </div>
+      <div class="library" id="library" aria-live="polite"></div>
+
+      <div class="engine-status" id="engineStatus" aria-live="polite">
+        <span class="pulse"></span>
+        Sistem hazırlanıyor…
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-header">
+        <div class="title-wrap">
+          <p class="eyebrow" id="workspaceEyebrow">Hoş geldiniz</p>
+          <h2 id="workspaceTitle">Belgelerinizi yükleyin, sorularınıza yanıt alın.</h2>
+        </div>
+        <div class="header-actions">
+          <button class="ghost" id="previewBtn" type="button" hidden>Belgeyi görüntüle</button>
+          <button class="ghost danger" id="deleteBtn" type="button" hidden>Belgeyi sil</button>
+        </div>
+      </header>
+
+      <section class="empty-state" id="emptyState">
+        <div class="empty-card">
+          <div class="empty-icon" aria-hidden="true">↑</div>
+          <p class="eyebrow">Başlamak çok kolay</p>
+          <h3>Belgenizi yükleyin</h3>
+          <p>PDF veya görsel belgenizi yükleyin. İşlem adımlarını takip edin ve hazır olduğunda belgenizle ilgili sorular sorun.</p>
+          <div class="dropzone" id="dropzone">
+            <strong>Dosyanızı buraya sürükleyip bırakın</strong>
+            <span>veya dosya seçmek için tıklayın</span>
+            <small>PDF, PNG, JPG veya WEBP</small>
+            <input id="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp" aria-label="Belge dosyası seç" />
+          </div>
+          <p class="privacy-note">Belgeleriniz bu çalışma alanında saklanır.</p>
+        </div>
+      </section>
+
+      <section class="chat-layout" id="chatLayout" hidden>
+        <div class="chat-column">
+          <div class="messages" id="messages" aria-live="polite"></div>
+          <form class="composer" id="askForm">
+            <textarea id="question" placeholder="Belgeniz hakkında bir soru sorun…" rows="1" aria-label="Sorunuzu yazın"></textarea>
+            <button type="submit" id="askBtn">Gönder <span aria-hidden="true">↑</span></button>
+          </form>
+          <p class="composer-hint">Göndermek için Enter, yeni satır için Shift + Enter</p>
+        </div>
+
+        <aside class="progress-panel" id="progressPanel">
+          <div class="progress-hero">
+            <p class="eyebrow">BELGE DURUMU</p>
+            <h3 id="progressLabel">İşleniyor</h3>
+            <div class="meter" role="progressbar" aria-label="Belge işleme ilerlemesi" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="meter-fill" id="meterFill"></div>
+            </div>
+            <div class="progress-meta">
+              <strong id="progressPercent">0%</strong>
+              <span id="progressDetail">İşlem başlatılıyor…</span>
+            </div>
+          </div>
+          <div class="steps-card">
+            <h3>İşlem adımları</h3>
+            <ol class="steps" id="steps"></ol>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal" id="uploadModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="uploadTitle">
+      <button class="modal-close" id="closeUpload" type="button" aria-label="Pencereyi kapat">×</button>
+      <p class="eyebrow">YENİ BELGE</p>
+      <h3 id="uploadTitle">Belge yükle</h3>
+      <p>Dosyanızı seçin. Yükleme tamamlanınca işlem adımlarını bu ekrandan takip edebilirsiniz.</p>
+      <div class="dropzone" id="modalDropzone">
+        <strong>Dosyanızı buraya bırakın</strong>
+        <span>veya seçmek için tıklayın</span>
+        <small>PDF, PNG, JPG veya WEBP</small>
+        <input id="modalFileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp" aria-label="Belge dosyası seç" />
+      </div>
+      <p class="upload-error" id="uploadError" role="alert" hidden></p>
+      <p class="uploading-message" id="uploadingMessage" aria-live="polite" hidden>Dosyanız yükleniyor…</p>
+      <button class="ghost cancel-btn" id="cancelUpload" type="button">Vazgeç</button>
+    </div>
+  </div>
+
+  <div class="modal" id="previewModal" hidden>
+    <div class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+      <div class="preview-head">
+        <h3 id="previewTitle">Belge önizlemesi</h3>
+        <button class="ghost" id="closePreview" type="button">Kapat</button>
+      </div>
+      <iframe id="previewFrame" title="Belge önizlemesi"></iframe>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

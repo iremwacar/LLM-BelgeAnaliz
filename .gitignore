@@ -1,0 +1,13 @@
+# Python önbellekleri
+__pycache__/
+*.py[cod]
+
+# Veritabanı ve büyük klasörler (GİTHUB'A GİTMEYECEK)
+qdrant_data/
+storage/
+data1/
+
+# Çevre değişkenleri ve ortam
+.env
+.venv
+venv/
